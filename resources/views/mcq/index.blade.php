@@ -5,7 +5,10 @@
 @section('content')
 <div class="container mx-auto px-4 py-4 md:py-8">
     <!-- Top Bar with Timer and Progress -->
-    <x-mcq.top-bar :totalQuestions="$totalQuestions" />
+    <x-mcq.top-bar 
+    :totalQuestions="$totalQuestions" 
+    :examDuration="$examDuration" 
+    :remainingTime="$remainingTime"/>
 
     <!-- Modals -->
     <x-mcq.modals />
@@ -24,6 +27,9 @@
             </button>
         </div>
     </div>
+
+
+    
 
     <!-- Warning Modal (used for both full-screen exit, tab switching, or multiple tabs) -->
     <div id="warningModal" class="fixed inset-0 flex items-center justify-center hidden z-50">
@@ -57,5 +63,9 @@
 <x-mcq.styles />
 
 <!-- Scripts -->
-<x-mcq.scripts />
+<x-mcq.scripts :totalQuestions="$totalQuestions" 
+:examDuration="$examDuration" 
+:remainingTime="$remainingTime"
+:warningCount="$warningCount"
+/>
 @endsection
