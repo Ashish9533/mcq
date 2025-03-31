@@ -35,7 +35,11 @@ Route::get('/activity-log', [ActivityLogController::class, 'index'])->name('acti
     });
 
 
+Route::get('exam-mcq-user-result',[ActivityLogController::class,'showResult']);
 
+Route::get('test',function(){
+    return view('test');
+});
 
 
 
@@ -59,13 +63,18 @@ Route::get('/', function () {
 })->name('home');
 
 // MCQ Routes
-Route::middleware(['auth'])->group(function () {
+Route::middleware(['web', 'auth'])->group(function () {
     Route::get('/mcq', [MCQController::class, 'index'])->name('mcq.index');
     Route::get('/mcq/question/{id}', [MCQController::class, 'getQuestion'])->name('mcq.question');
     Route::post('/mcq/submit', [MCQController::class, 'submitExam'])->name('mcq.submit');
 
     Route::post('/log-activity', [ActivityLogController::class, 'logActivity'])->name('log.activity');
+    Route::get('/exam-ended', [McqController::class, 'showEndedExam'])
+    ->name('exam.ended');
+ 
 });
+
+Route::get('/thanks',[MCQController::class,'thanksCandidate'])->name('thank');
 
 // Add this route for secure logout
 // Route::post('/logout', [LogoutController::class, 'logout'])->name('logout');
