@@ -13,6 +13,8 @@ use Jenssegers\Agent\Agent;
 use Spatie\Activitylog\Facades\Activity;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 class MCQController extends Controller
 {
     /**
@@ -25,10 +27,6 @@ class MCQController extends Controller
             return redirect()->route('login');
         }
 
-        // If the user already has an active exam session, handle it.
-        if (Session::has('exam_started')) {
-            return $this->handleActiveSession();
-        }
 
         // Retrieve active categories along with their active questions and options.
         $categories = Category::with([
@@ -51,13 +49,34 @@ class MCQController extends Controller
             $categories->each(function ($category) {
                 $category->questions = $category->questions->shuffle();
             });
-        }
+        } 
 
         // Count total active questions.
         $totalQuestions = Question::where('is_active', true)->count();
 
+        // Set a scheduled start time (IST) for the exam.
+        $scheduledStartTime = Carbon::parse('2025-04-01 00:46:00', 'Asia/Kolkata');
+
+        // Calculate exam duration and remaining time.
+        $examDuration = 1 * 60; // 120 minutes in seconds.
+        $endTime = $scheduledStartTime->copy()->addSeconds($examDuration);
+        $remainingTime = (int) $endTime->diffInSeconds(now()->setTimezone('Asia/Kolkata'), absolute: true);
+        $warningCount = Session::get('warning_count');
+
+        // Optionally, check if it's not time to start the exam yet.
+        if (now()->lt($scheduledStartTime)) {
+            return view('mcq.waiting', compact('scheduledStartTime'));
+        }
+
+        if (now()->gt($endTime)) {
+            return redirect()->route('exam.ended', [
+                'start' => $scheduledStartTime->timestamp,
+                'end' => $endTime->timestamp
+            ]);
+        }
+
         // Initialize the exam session (this sets start time, device info, etc.).
-        $this->initializeExamSession();
+        $this->initializeExamSession($scheduledStartTime); // Pass scheduled start time.
 
         // Prepare all questions data for JavaScript.
         $allQuestions = [];
@@ -78,42 +97,56 @@ class MCQController extends Controller
             }
         }
 
-        // Retrieve the exam start time from the session.
-        $examStartTime = session('exam_start_time');
-        $examDuration = 120 * 60; // 120 minutes in seconds.
-        $endTime = Carbon::parse($examStartTime)->addSeconds($examDuration);
-        $remainingTime = $endTime->diffInSeconds(now(), false);
 
-        return view('mcq.index', compact('categories', 'totalQuestions', 'allQuestions', 'remainingTime'));
+
+
+
+        // dd($remainingTime );
+        return view('mcq.index', compact(
+            'categories',
+            'totalQuestions',
+            'allQuestions',
+            'remainingTime',
+            'examDuration',
+            'warningCount'
+        ));
     }
 
     /**
      * Initialize the exam session with security measures.
      */
-    private function initializeExamSession()
+    private function initializeExamSession($startTime = null)
     {
         $agent = new Agent();
 
-        // Set exam session data.
+        // Use the scheduled start time if provided; otherwise, use now().
+        $examStartTime = $startTime ?: now();
         Session::put('exam_started', true);
-        Session::put('exam_start_time', now());
+        if (!Session::has('exam_start_time')) {
+            Session::put('exam_start_time', $examStartTime);
+        }
+
         Session::put('exam_ip', request()->ip());
         Session::put('exam_user_agent', request()->userAgent());
         Session::put('exam_device_fingerprint', $this->generateDeviceFingerprint($agent));
-        Session::put('last_activity', time()); // Using time() here is acceptable for tracking activity.
+        Session::put('last_activity', now());
         Session::put('tab_switches', 0);
         Session::put('answers', []);
         Session::put('reviewed_questions', []);
+        if (!Session::has('warning_count')) {
+            Session::put('warning_count', 0);
+        }
 
-        // Calculate exam end time using the stored start time.
-        $examStartTime = session('exam_start_time');
-        $examDuration = 120 * 60; // 120 minutes in seconds.
-        $endTime = Carbon::parse($examStartTime)->addSeconds($examDuration);
+
+
+        // Calculate exam end time.
+        $examDuration = 20 * 60; // 120 minutes in seconds.
+        $endTime = $examStartTime->copy()->addSeconds($examDuration);
 
         // Create an exam attempt record.
         ExamAttempt::create([
             'user_id' => auth()->id(),
-            'start_time' => now(),
+            'start_time' => $examStartTime,
             'end_time' => $endTime,
             'ip_address' => request()->ip(),
             'user_agent' => request()->userAgent(),
@@ -122,32 +155,12 @@ class MCQController extends Controller
         ]);
     }
 
-    /**
-     * Handle active exam session
-     */
-    private function handleActiveSession()
-    {
-        // Convert the stored exam end time to a Carbon instance.
-        $examEndTime = Carbon::parse(Session::get('exam_end_time'));
 
-        // Check if the exam has expired.
-        if (now()->greaterThan($examEndTime)) {
-            return $this->autoSubmitExam();
-        }
-
-        // Check for suspicious activity.
-        if ($this->detectSuspiciousActivity()) {
-            return $this->handleSuspiciousActivity();
-        }
-
-        // Continue with the exam.
-        return $this->continueExam();
-    }
 
     /**
      * Auto submit exam when expired or suspicious activity detected
      */
-    private function autoSubmitExam()
+    private function autoSubmitExam(Request $request)
     {
         try {
             // Begin transaction
@@ -169,7 +182,8 @@ class MCQController extends Controller
 
             // Calculate time spent in seconds (ensure it's an integer)
             $startTime = Session::get('exam_start_time');
-            $timeSpent = $startTime ? (int) (time() - $startTime) : 0;
+            $timeSpent = $startTime ? (int) now()->diffInSeconds($startTime) : 0;
+
 
             // Update attempt data
             $attempt->update([
@@ -236,9 +250,18 @@ class MCQController extends Controller
                 'last_activity',
                 'tab_switches',
                 'answers',
-                'reviewed_questions'
+                'reviewed_questions',
+                'warning_count'
             ]);
 
+            Session::flush();
+
+            // Logout the user
+            Auth::logout();
+
+            // Invalidate the session
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
             // Commit transaction
             \DB::commit();
 
@@ -260,151 +283,101 @@ class MCQController extends Controller
         }
     }
 
-    /**
-     * Continue with active exam
-     */
-    private function continueExam()
-    {
-        $categories = Category::with([
-            'questions' => function ($query) {
-                $query->where('is_active', true)
-                    ->orderBy('order')
-                    ->with([
-                        'options' => function ($query) {
-                            $query->orderBy('order');
-                        }
-                    ]);
-            }
-        ])->where('is_active', true)
-            ->orderBy('order')
-            ->get();
 
-        $totalQuestions = Question::where('is_active', true)->count();
-
-        return view('mcq.index', compact('categories', 'totalQuestions'));
-    }
 
     /**
      * Get question details for AJAX request
      */
-    public function getQuestion($id)
-    {
-        // Validate session
-        if (!$this->validateSession()) {
-            return response()->json(['error' => 'Invalid session'], 403);
-        }
-
-        // Check if question is part of current exam session
-        $question = Question::with([
-            'options' => function ($query) {
-                $query->orderBy('order');
-            }
-        ])->findOrFail($id);
-
-        // Verify question is active and belongs to an active category
-        if (!$question->is_active || !$question->category->is_active) {
-            return response()->json(['error' => 'Question not available'], 404);
-        }
-
-        // Prepare question data
-        $questionData = [
-            'id' => $question->id,
-            'question' => $question->question_text,
-            'category' => $question->category->name,
-            'options' => $question->options->map(function ($option) {
-                return [
-                    'id' => $option->id,
-                    'text' => $option->option_text
-                ];
-            })
-        ];
-
-        // Encrypt all data using Laravel's encryption
-        $encryptedData = [
-            'id' => Crypt::encryptString($questionData['id']),
-            'question' => Crypt::encryptString($questionData['question']),
-            'category' => Crypt::encryptString($questionData['category']),
-            'options' => $questionData['options']->map(function ($option) {
-                return [
-                    'id' => Crypt::encryptString($option['id']),
-                    'text' => Crypt::encryptString($option['text'])
-                ];
-            })
-        ];
-
-        // Log access for security monitoring
-        \Log::info('Question accessed', [
-            'user_id' => auth()->id(),
-            'question_id' => $id,
-            'ip' => request()->ip(),
-            'user_agent' => request()->userAgent()
-        ]);
-
-        return response()->json($encryptedData);
-    }
 
     /**
      * Submit exam answers
      */
     public function submitExam(Request $request)
     {
-        // Validate session
-        if (!$this->validateSession()) {
-            return response()->json(['error' => 'Invalid session'], 403);
-        }
-
         // Get the exam session
         $examSession = ExamAttempt::where('user_id', auth()->id())
             ->where('status', 'in_progress')
             ->first();
-
+    
         activity('Exam Submitted')
             ->causedBy(Auth::user())
             ->withProperties(['ip' => $request->ip(), 'email' => auth()->user()->email])
-            ->log('Exam is submitted by users at ' . Carbon::now() . '' . $examSession->id);
-
-
-
+            ->log('Exam is submitted by user at ' . Carbon::now() . ' - Session ID: ' . ($examSession ? $examSession->id : 'N/A'));
+    
         if (!$examSession) {
             return response()->json(['error' => 'No active exam session found'], 404);
         }
-
-        // Calculate time spent (ensure it's an integer)
-        $startTime = Session::get('exam_start_time');
-        $timeSpent = $startTime ? (int) (time() - $startTime) : 0;
-
-        // Update exam session
-        $examSession->update([
-            'status' => 'completed',
-            'time_spent' => $timeSpent,
-            'submitted_at' => now()
-        ]);
-
-        // Process answers
-        $answers = $request->input('answers', []);
-        foreach ($answers as $answer) {
-            if (isset($answer['question']) && isset($answer['answer'])) {
-                ExamAnswer::create([
-                    'exam_attempt_id' => $examSession->id,
-                    'question_id' => $answer['question'],
-                    'selected_option' => $answer['answer'],
-                    'is_reviewed' => in_array($answer['question'], $request->input('reviewed_questions', []))
-                ]);
+    
+        // Calculate time spent from the request value (adjusted as needed)
+        $timeSpent = (int) $request->timeSpent - 1;
+    
+        // Start the transaction
+        DB::beginTransaction();
+        try {
+            // Update exam session
+            $examSession->update([
+                'status'       => 'completed',
+                'time_spent'   => $timeSpent,
+                'submitted_at' => now()
+            ]);
+    
+            // Process answers
+            $answers = $request->input('answers', []);
+            $reviewedQuestions = $request->input('reviewed_questions', []);
+            foreach ($answers as $answer) {
+                if (isset($answer['question']) && isset($answer['answer'])) {
+                    ExamAnswer::create([
+                        'exam_attempt_id' => $examSession->id,
+                        'question_id'     => $answer['question'],
+                        'selected_option' => $answer['answer'],
+                        'is_reviewed'     => in_array($answer['question'], $reviewedQuestions)
+                    ]);
+                }
             }
+    
+            // Commit the transaction if everything is successful
+            DB::commit();
+        } catch (\Exception $e) {
+            // Roll back the transaction on error
+            DB::rollBack();
+    
+            // Log the error using an activity log
+            activity('Exam Submission Error')
+                ->causedBy(Auth::user())
+                ->withProperties([
+                    'ip' => $request->ip(),
+                    'email' => auth()->user()->email,
+                    'error' => $e->getMessage()
+                ])
+                ->log('Exam submission error occurred at ' . Carbon::now() . ' - Session ID: ' . $examSession->id);
+    
+            // Optionally, you can also log to the default logger
+            Log::error('Exam submission failed', ['error' => $e->getMessage(), 'session_id' => $examSession->id]);
+    
+            return response()->json(['error' => 'Exam submission failed. Please try again.'], 500);
         }
-
-        // Clear session data
-        Session::forget(['exam_start_time', 'exam_questions', 'current_question']);
-
+    
+        // Log out and clear session data
+        Auth::logout();
+        $request->session()->invalidate();
+        Session::forget([
+            'exam_started',
+            'exam_start_time',
+            'exam_end_time',
+            'exam_ip',
+            'exam_user_agent',
+            'exam_device_fingerprint',
+            'last_activity',
+            'tab_switches',
+            'answers',
+            'reviewed_questions', 
+            'warning_count'
+        ]);
+        $request->session()->regenerateToken();
+    
         return response()->json([
             'success' => true,
-            'message' => 'Exam submitted successfully',
-            'score' => $examSession->score,
-            'total_questions' => $examSession->total_questions,
-            'correct_answers' => $examSession->correct_answers,
-            'incorrect_answers' => $examSession->incorrect_answers,
-            'unanswered_questions' => $examSession->unanswered_questions
-        ]);
+        ],200);
     }
 
     /**
@@ -506,4 +479,29 @@ class MCQController extends Controller
             ->where('status', 'in_progress')
             ->first();
     }
+
+
+    public function showEndedExam(Request $request)
+    {
+        $data = [
+            'start' => Carbon::createFromTimestamp($request->start, 'Asia/Kolkata'),
+            'end' => Carbon::createFromTimestamp($request->end, 'Asia/Kolkata'),
+            'duration' => ($request->end - $request->start) / 60 . ' mins'
+        ];
+
+        return view('mcq.after-exam', $data);
+    }
+
+
+
+
+    public function thanksCandidate(Request $request){
+   
+
+        return view('mcq.thanks');
+    }
+
+
 }
+
+
