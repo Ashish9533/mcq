@@ -34,13 +34,13 @@
         totalQuestionsSpan.textContent = totalQuestions;
         let answeredQuestions = new Set();
         let reviewedQuestions = new Set();
-        let timeLeft = 7200; // 2 hours in seconds
+        // 2 hours in seconds
 
 
 
         // Enhanced security variables
-        let securityWarnings = 0;
-        const MAX_SECURITY_WARNINGS = 3;
+
+
         let lastWarningTime = Date.now();
         const WARNING_COOLDOWN = 60000; // 1 minute cooldown between warnings
         let lastActivity = Date.now();
@@ -53,6 +53,9 @@
         const MIN_ANSWERS_REQUIRED = 5;
         const DEVTOOLS_THRESHOLD = 160;
         let lastSecurityCheck = 0;
+        let remainingTime = @json($remainingTime);
+        let examDuration = @json($examDuration);
+        let timeLeft = examDuration;
         const SECURITY_CHECK_INTERVAL = 5000; // Check every 5 seconds instead of every second
 
         // Add this at the top of your script with other variables
@@ -182,7 +185,7 @@
                 const questionItem = questionItems[index];
                 if (questionItem) {
                     const category = questionItem.dataset.category;
-                    currentCategorySpan.textContent = getCategoryName(category);
+                    currentCategorySpan.textContent = category;
 
                     // Remove highlight from all questions
                     questionItems.forEach(item => {
@@ -295,7 +298,7 @@
             item.addEventListener('click', () => {
                 currentQuestionIndex = index;
                 showQuestion(currentQuestionIndex);
-               
+
             });
         });
 
@@ -334,7 +337,7 @@
                                 answer: document.querySelector(
                                     `input[name="answer"]:checked`)?.value
                             })),
-                            timeSpent: 7200 - timeLeft,
+                            timeSpent: examDuration - timeLeft,
                             reviewedQuestions: Array.from(reviewedQuestions)
                         })
                     });
@@ -412,15 +415,15 @@
         }
 
         // Function to get category name from code
-        function getCategoryName(code) {
-            const categories = {
-                'dsa': 'Data Structures & Algorithms',
-                'system-design': 'System Design',
-                'microservices': 'Microservices',
-                'database': 'Database Design'
-            };
-            return categories[code] || code;
-        }
+        // function getCategoryName(code) {
+        //     const categories = {
+        //         'dsa': 'Data Structures & Algorithms',
+        //         'system-design': 'System Design',
+        //         'microservices': 'Microservices',
+        //         'database': 'Database Design'
+        //     };
+        //     return categories[code] || code;
+        // }
 
         // Handle logout functionality
         const logoutBtn = document.getElementById('logout-btn');
@@ -657,6 +660,17 @@
 
 
 
+        function updateWarningModal() {
+            document.getElementById("warningsLeft").textContent = maxWarnings - warningCount;
+            document.getElementById("warningMessage").textContent = warningMessages.join(" ");
+            document.getElementById("warningModal").classList.remove("hidden");
+        }
+
+
+        function clearWarnings() {
+            warningMessages = [];
+            hideWarningModal();
+        }
 
 
 
@@ -674,8 +688,10 @@
         });
 
         // --- Full-Screen and Warning Variables ---
-        let warningCount = 0;
-        const maxWarnings = 2;
+        let warningCount = @json($warningCount);
+        console.log(warningCount);
+        const maxWarnings = 5;
+        let warningMessages = [];
 
         // --- Full-Screen Request Function ---
         function requestFullScreen() {
@@ -695,6 +711,7 @@
 
         // --- Warning Modal Functions ---
         function showWarningModal(message) {
+            console.log(message);
             document.getElementById("warningsLeft").textContent = maxWarnings - warningCount;
             // Update the warning message text.
             document.getElementById("warningMessage").textContent = message;
@@ -730,23 +747,30 @@
         // Full-screen exit detection.
         document.addEventListener("fullscreenchange", () => {
             if (!document.fullscreenElement) {
-                warningCount++;
-                logActivity("User exited full-screen mode.");
-                if (warningCount < maxWarnings) {
-                    showWarningModal("You have exited full-screen mode. Please return to full-screen.");
-                } else {
-                    ajaxLogout();
+                // If the document is not hidden, then it's likely an intentional exit.
+                if (!document.hidden) {
+                    warningCount++;
+                    logActivity("User exited full-screen mode.");
+                    warningMessages.push(
+                        "You have exited full-screen mode. Please return to full-screen.");
+                    if (warningCount < maxWarnings) {
+                        updateWarningModal();
+                    } else {
+                        ajaxLogout();
+                    }
                 }
             }
         });
+
 
         // Tab switching detection.
         document.addEventListener("visibilitychange", () => {
             if (document.hidden) {
                 warningCount++;
                 logActivity("User switched tabs during the exam.");
+                warningMessages.push("Tab switching detected. Please remain on the exam tab.");
                 if (warningCount < maxWarnings) {
-                    showWarningModal("Tab switching detected. Please remain on the exam tab.");
+                    updateWarningModal();
                 } else {
                     ajaxLogout();
                 }
@@ -775,6 +799,7 @@
         // Restore full-screen button in warning modal.
         document.getElementById("restoreFullScreen").addEventListener("click", () => {
             hideWarningModal();
+            clearWarnings();
             requestFullScreen();
         });
 
@@ -792,6 +817,80 @@
 
 
 
+
+
+
+        // document.addEventListener("contextmenu", function(event) {
+        //     event.preventDefault();
+        // });
+
+        /////////////////////////////////////Time manage//////////////////%
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600).toString().padStart(2, '0');
+            const minutes = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+            const secs = (seconds % 60).toString().padStart(2, '0');
+            return `${hours}:${minutes}:${secs}`;
+        }
+
+
+
+        // Format exam duration as hh:mm:ss
+        const formattedExamDuration = formatTime(examDuration);
+        const timerDiv = document.getElementById('timer');
+
+        // Function to update the timer display
+        async function updateTimer() {
+            if (remainingTime < 0) {
+                timerDiv.textContent = "00:00:00";
+
+                try {
+                    const response = await fetch('/mcq/submit', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')
+                                .content
+                        },
+                        body: JSON.stringify({
+                            answers: Array.from(answeredQuestions).map(q => ({
+                                question: q,
+                                answer: document.querySelector(
+                                    `input[name="answer-${q}"][data-question-id="${q}"]:checked`
+                                )?.value || null
+                            })),
+                            timeSpent: examDuration - remainingTime,
+                            reviewedQuestions: Array.from(reviewedQuestions)
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        disableExamInterface();
+                        // Explicit client-side redirection after a successful submission
+                        window.location.href = '/thanks';
+                    } else {
+                        throw new Error('Submission failed');
+                    }
+                } catch (error) {
+                    console.error('Error submitting exam:', error);
+                    showWarning('Error submitting exam. Please try again.');
+                    submissionAttempted = false;
+                }
+                return;
+            }
+
+            // Update timer display and schedule the next update
+            if (remainingTime >= 0) {
+                timerDiv.textContent = `${formatTime(remainingTime)} / ${formattedExamDuration}`;
+                remainingTime--;
+                setTimeout(updateTimer, 1000);
+            }
+        }
+
+
+        // Start the timer
+        updateTimer();
 
     });
 </script>
