@@ -50,25 +50,28 @@
 
 
         let lastWarningTime = Date.now();
-        const WARNING_COOLDOWN = 60000; // 1 minute cooldown between warnings
+        // const WARNING_COOLDOWN = 60000; // 1 minute cooldown between warnings
         let lastActivity = Date.now();
         let isTabVisible = true;
         let warningShown = false;
         let submissionAttempted = false;
         let devToolsOpen = false;
-        const INACTIVITY_TIMEOUT = 5 * 60 * 1000;
-        const WARNING_TIME = 5 * 60;
-        const MIN_ANSWERS_REQUIRED = 5;
-        const DEVTOOLS_THRESHOLD = 160;
+        // const INACTIVITY_TIMEOUT = 5 * 60 * 1000;
+        // const WARNING_TIME = 5 * 60;
+        // const MIN_ANSWERS_REQUIRED = 5;
+        // const DEVTOOLS_THRESHOLD = 160;
         let lastSecurityCheck = 0;
         let remainingTime = @json($remainingTime);
         let examDuration = @json($examDuration);
         let timeLeft = examDuration;
-        const SECURITY_CHECK_INTERVAL = 5000; // Check every 5 seconds instead of every second
+        // const SECURITY_CHECK_INTERVAL = 5000; // Check every 5 seconds instead of every second
 
         // Add this at the top of your script with other variables
         let questionAnswers = new Map(); // Store answers for each question
+        let warningCount = @json($warningCount);
 
+        const maxWarnings = 3;
+        let warningMessages = [];
 
 
 
@@ -719,7 +722,7 @@
         // Modal: confirm submission
         modalConfirm.addEventListener('click', async () => {
             await submitFormBeforeTimeout();
-            submitModal.classList.add('hidden');
+            // submitModal.classList.add('hidden');
         });
 
 
@@ -780,10 +783,7 @@
         });
 
         // --- Full-Screen and Warning Variables ---
-        let warningCount = @json($warningCount);
-        console.log(warningCount);
-        const maxWarnings = 10;
-        let warningMessages = [];
+
 
         // --- Full-Screen Request Function ---
         function requestFullScreen() {
@@ -947,7 +947,7 @@
                             answers: Array.from(answeredQuestions).map(q => ({
                                 question: q,
                                 answer: document.querySelector(
-                                    `input[name="answer-${q}"][data-question-id="${q}"]:checked` 
+                                    `input[name="answer-${q}"][data-question-id="${q}"]:checked`
                                 )?.value || null
                             })),
                             timeSpent: examDuration - remainingTime,

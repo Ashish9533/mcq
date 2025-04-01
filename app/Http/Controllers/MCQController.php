@@ -55,13 +55,24 @@ class MCQController extends Controller
         $totalQuestions = Question::where('is_active', true)->count();
 
         // Set a scheduled start time (IST) for the exam.
-        $scheduledStartTime = Carbon::parse('2025-04-01 14:35:00', 'Asia/Kolkata');
+        $scheduledStartTime = Carbon::parse('2025-04-01 16:15:00', 'Asia/Kolkata');
 
         // Calculate exam duration and remaining time.
-        $examDuration = 2 * 60; // 120 minutes in seconds.
+        $examDuration = 120 * 60; // 120 minutes in seconds.
         $endTime = $scheduledStartTime->copy()->addSeconds($examDuration);
         $remainingTime = (int) $endTime->diffInSeconds(now()->setTimezone('Asia/Kolkata'), absolute: true);
         $warningCount = Session::get('warning_count');
+
+
+        $attempt = ExamAttempt::where('user_id', auth()->id())
+            ->where('status', 'completed')
+            ->latest()
+            ->first();
+
+        if ($attempt) {
+            return view('mcq.exam-attempt-after');
+        }
+
 
         // Optionally, check if it's not time to start the exam yet.
         if (now()->lt($scheduledStartTime)) {
@@ -74,6 +85,8 @@ class MCQController extends Controller
                 'end' => $endTime->timestamp
             ]);
         }
+
+
 
         // Initialize the exam session (this sets start time, device info, etc.).
         $this->initializeExamSession($scheduledStartTime, $examDuration); // Pass scheduled start time.
@@ -324,7 +337,7 @@ class MCQController extends Controller
             $answers = $request->input('answers', []);
             $reviewedQuestions = $request->input('reviewed_questions', []);
 
-            
+
             $correct = 0;
             $incorrect = 0;
             $unanswered = 0;
@@ -380,7 +393,7 @@ class MCQController extends Controller
                 'incorrect_answers' => $incorrect,
                 'unanswered_questions' => $unanswered
             ]);
-         
+
 
             // Commit the transaction if everything is successful
             DB::commit();
