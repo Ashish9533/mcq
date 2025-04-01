@@ -37,13 +37,23 @@ class ExamAnswer extends Model
     /**
      * Check if the answer is correct.
      */
-    public function isCorrect()
-    {
-        if (!$this->question || !$this->selected_option) {
-            return false;
-        }
+    // public function isCorrect()
+    // {
+    //     if (!$this->question || !$this->selected_option) {
+    //         return false;
+    //     }
 
-        return $this->question->correct_option === $this->selected_option;
+    //     return $this->question->correct_option === $this->selected_option;
+    // }
+
+    public function selectedOption(): BelongsTo
+    {
+        return $this->belongsTo(Option::class, 'selected_option');
+    }
+
+    public function isCorrect(): bool
+    {
+        return $this->selectedOption && $this->selectedOption->is_correct;
     }
 
     /**

@@ -23,6 +23,14 @@
         const showReviewed = document.getElementById('show-reviewed');
         const showAnswered = document.getElementById('show-answered');
         const answeredCount = document.getElementById('answered-count');
+        let authUserEmail = "{{ auth()->user()->email }}";
+        const submitModal = document.getElementById('submit-modal');
+        const modalClose = document.getElementById('modal-close');
+        const modalConfirm = document.getElementById('modal-confirm');
+        const verificationEmail = document.getElementById('verification-email');
+        const emailError = document.getElementById('email-error');
+        const modalProgress = document.getElementById('modal-progress');
+        const totalQuestionsModal = document.getElementById('total-questions-modal');
 
         // Add filter state variables
         let isFilterVisible = false;
@@ -64,6 +72,10 @@
 
 
 
+        function isValidEmail(email) {
+            const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            return regex.test(email);
+        }
 
 
 
@@ -631,6 +643,86 @@
 
 
 
+        async function submitFormBeforeTimeout() {
+            // Reset error display
+            emailError.classList.add('hidden');
+            verificationEmail.classList.remove('border-red-500');
+
+            const emailValue = verificationEmail.value.trim();
+
+            // Validate email format
+            if (!emailValue || !isValidEmail(emailValue)) {
+                emailError.textContent = "Please enter a valid email address.";
+                emailError.classList.remove('hidden');
+                verificationEmail.classList.add('border-red-500');
+                return;
+            }
+
+            // Ensure email matches the authenticated user's email
+            if (emailValue !== authUserEmail) {
+                emailError.textContent = "The email does not match your account email.";
+                emailError.classList.remove('hidden');
+                verificationEmail.classList.add('border-red-500');
+                return;
+            }
+
+            // Prepare submission payload
+            const submissionPayload = {
+                email: emailValue,
+                answers: Array.from(answeredQuestions).map(q => ({
+                    question: q,
+                    answer: document.querySelector(
+                        `input[name="answer-${q}"][data-question-id="${q}"]:checked`
+                    )?.value || null
+                })),
+                timeSpent: examDuration - remainingTime,
+                reviewed_questions: Array.from(reviewedQuestions)
+            };
+
+            try {
+                const response = await fetch('mcq/before-time-submit', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                    },
+                    body: JSON.stringify(submissionPayload)
+                });
+                const data = await response.json();
+                if (data.success) {
+                    disableExamInterface();
+                    window.location.href = '/thanks';
+                    // showSuccessMessage('Exam submitted successfully!');
+                } else {
+                    throw new Error(data.error || 'Exam submission failed. Please try again.');
+                }
+            } catch (error) {
+                console.error('Error submitting exam:', error);
+                emailError.textContent = error.message;
+                emailError.classList.remove('hidden');
+                verificationEmail.classList.add('border-red-500');
+            }
+        }
+
+        // Modal: show on submit button click
+        submitExamBtn.addEventListener('click', () => {
+            totalQuestionsModal.textContent = totalQuestions;
+            modalProgress.textContent = answeredQuestions.size;
+            submitModal.classList.remove('hidden');
+        });
+
+        // Modal: close on cross icon click
+        modalClose.addEventListener('click', () => {
+            submitModal.classList.add('hidden');
+        });
+
+        // Modal: confirm submission
+        modalConfirm.addEventListener('click', async () => {
+            await submitFormBeforeTimeout();
+            submitModal.classList.add('hidden');
+        });
+
+
 
 
 
@@ -690,7 +782,7 @@
         // --- Full-Screen and Warning Variables ---
         let warningCount = @json($warningCount);
         console.log(warningCount);
-        const maxWarnings = 5;
+        const maxWarnings = 10;
         let warningMessages = [];
 
         // --- Full-Screen Request Function ---
@@ -855,7 +947,7 @@
                             answers: Array.from(answeredQuestions).map(q => ({
                                 question: q,
                                 answer: document.querySelector(
-                                    `input[name="answer-${q}"][data-question-id="${q}"]:checked`
+                                    `input[name="answer-${q}"][data-question-id="${q}"]:checked` 
                                 )?.value || null
                             })),
                             timeSpent: examDuration - remainingTime,

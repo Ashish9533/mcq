@@ -27,7 +27,7 @@ class Option extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'is_correct' => 'boolean',
+     
         'order' => 'integer',
     ];
 

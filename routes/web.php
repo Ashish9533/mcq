@@ -35,7 +35,7 @@ Route::get('/activity-log', [ActivityLogController::class, 'index'])->name('acti
     });
 
 
-Route::get('exam-mcq-user-result',[ActivityLogController::class,'showResult']);
+Route::get('exam-mcq-user-result/{user?}',[ActivityLogController::class,'getExamResult']);
 
 Route::get('test',function(){
     return view('test');
@@ -67,6 +67,7 @@ Route::middleware(['web', 'auth'])->group(function () {
     Route::get('/mcq', [MCQController::class, 'index'])->name('mcq.index');
     Route::get('/mcq/question/{id}', [MCQController::class, 'getQuestion'])->name('mcq.question');
     Route::post('/mcq/submit', [MCQController::class, 'submitExam'])->name('mcq.submit');
+    Route::post('mcq/before-time-submit', [MCQController::class, 'beforeTimeSubmit'])->name('mcq.before-time-submit');
 
     Route::post('/log-activity', [ActivityLogController::class, 'logActivity'])->name('log.activity');
     Route::get('/exam-ended', [McqController::class, 'showEndedExam'])

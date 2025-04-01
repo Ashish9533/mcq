@@ -1,4 +1,5 @@
-@props(['totalQuestions'])
+@props(['totalQuestions','examDuration','remainingTime'])
+
 
 <div class="bg-white shadow-lg rounded-lg p-4 md:p-6 mb-6 transition-all duration-300 hover:shadow-xl">
     <div class="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
@@ -8,7 +9,8 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                 </svg>
                 <div class="text-lg font-semibold text-gray-700">Time Left:</div>
-                <div id="timer" class="text-2xl font-bold text-blue-600 font-mono">02:00:00</div>
+                <!-- Timer container where the formatted time will appear -->
+                <div id="timer" class="text-2xl font-bold text-blue-600 font-mono"></div>
             </div>
         </div>
         <div class="flex items-center space-x-6">
@@ -30,4 +32,4 @@
             </button>
         </div>
     </div>
-</div> 
+</div>

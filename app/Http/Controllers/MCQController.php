@@ -49,16 +49,16 @@ class MCQController extends Controller
             $categories->each(function ($category) {
                 $category->questions = $category->questions->shuffle();
             });
-        } 
+        }
 
         // Count total active questions.
         $totalQuestions = Question::where('is_active', true)->count();
 
         // Set a scheduled start time (IST) for the exam.
-        $scheduledStartTime = Carbon::parse('2025-04-01 00:46:00', 'Asia/Kolkata');
+        $scheduledStartTime = Carbon::parse('2025-04-01 14:35:00', 'Asia/Kolkata');
 
         // Calculate exam duration and remaining time.
-        $examDuration = 1 * 60; // 120 minutes in seconds.
+        $examDuration = 2 * 60; // 120 minutes in seconds.
         $endTime = $scheduledStartTime->copy()->addSeconds($examDuration);
         $remainingTime = (int) $endTime->diffInSeconds(now()->setTimezone('Asia/Kolkata'), absolute: true);
         $warningCount = Session::get('warning_count');
@@ -76,7 +76,7 @@ class MCQController extends Controller
         }
 
         // Initialize the exam session (this sets start time, device info, etc.).
-        $this->initializeExamSession($scheduledStartTime); // Pass scheduled start time.
+        $this->initializeExamSession($scheduledStartTime, $examDuration); // Pass scheduled start time.
 
         // Prepare all questions data for JavaScript.
         $allQuestions = [];
@@ -115,7 +115,7 @@ class MCQController extends Controller
     /**
      * Initialize the exam session with security measures.
      */
-    private function initializeExamSession($startTime = null)
+    private function initializeExamSession($startTime = null, $examDuration = null)
     {
         $agent = new Agent();
 
@@ -139,8 +139,7 @@ class MCQController extends Controller
 
 
 
-        // Calculate exam end time.
-        $examDuration = 20 * 60; // 120 minutes in seconds.
+
         $endTime = $examStartTime->copy()->addSeconds($examDuration);
 
         // Create an exam attempt record.
@@ -298,49 +297,97 @@ class MCQController extends Controller
         $examSession = ExamAttempt::where('user_id', auth()->id())
             ->where('status', 'in_progress')
             ->first();
-    
+
         activity('Exam Submitted')
             ->causedBy(Auth::user())
             ->withProperties(['ip' => $request->ip(), 'email' => auth()->user()->email])
             ->log('Exam is submitted by user at ' . Carbon::now() . ' - Session ID: ' . ($examSession ? $examSession->id : 'N/A'));
-    
+
         if (!$examSession) {
             return response()->json(['error' => 'No active exam session found'], 404);
         }
-    
+
         // Calculate time spent from the request value (adjusted as needed)
         $timeSpent = (int) $request->timeSpent - 1;
-    
+
         // Start the transaction
         DB::beginTransaction();
         try {
             // Update exam session
             $examSession->update([
-                'status'       => 'completed',
-                'time_spent'   => $timeSpent,
+                'status' => 'completed',
+                'time_spent' => $timeSpent,
                 'submitted_at' => now()
             ]);
-    
+
             // Process answers
             $answers = $request->input('answers', []);
             $reviewedQuestions = $request->input('reviewed_questions', []);
+
+            
+            $correct = 0;
+            $incorrect = 0;
+            $unanswered = 0;
+
+
+
+            // Update attempt with scores
+
+
+
             foreach ($answers as $answer) {
+
+
                 if (isset($answer['question']) && isset($answer['answer'])) {
                     ExamAnswer::create([
                         'exam_attempt_id' => $examSession->id,
-                        'question_id'     => $answer['question'],
+                        'question_id' => $answer['question'],
                         'selected_option' => $answer['answer'],
-                        'is_reviewed'     => in_array($answer['question'], $reviewedQuestions)
+                        'is_reviewed' => in_array($answer['question'], $reviewedQuestions)
                     ]);
                 }
+
+
+                $question = Question::find($answer['question']);
+                if (!$question)
+                    continue;
+
+                if (empty($answer['answer'])) {
+                    $unanswered++;
+                } else {
+                    $isCorrect = $question->options()
+                        ->where('id', $answer['answer'])
+                        ->where('is_correct', true)
+                        ->exists();
+
+                    if ($isCorrect) {
+                        $correct++;
+                    } else {
+                        $incorrect++;
+                    }
+                }
+
+
+
+
             }
-    
+
+
+            $examSession->update([
+                'score' => count($answers) > 0 ? ($correct / count($answers)) * 100 : 0,
+                'total_questions' => count($answers),
+                'correct_answers' => $correct,
+                'incorrect_answers' => $incorrect,
+                'unanswered_questions' => $unanswered
+            ]);
+         
+
             // Commit the transaction if everything is successful
             DB::commit();
         } catch (\Exception $e) {
             // Roll back the transaction on error
             DB::rollBack();
-    
+
             // Log the error using an activity log
             activity('Exam Submission Error')
                 ->causedBy(Auth::user())
@@ -350,13 +397,13 @@ class MCQController extends Controller
                     'error' => $e->getMessage()
                 ])
                 ->log('Exam submission error occurred at ' . Carbon::now() . ' - Session ID: ' . $examSession->id);
-    
+
             // Optionally, you can also log to the default logger
             Log::error('Exam submission failed', ['error' => $e->getMessage(), 'session_id' => $examSession->id]);
-    
+
             return response()->json(['error' => 'Exam submission failed. Please try again.'], 500);
         }
-    
+
         // Log out and clear session data
         Auth::logout();
         $request->session()->invalidate();
@@ -370,14 +417,14 @@ class MCQController extends Controller
             'last_activity',
             'tab_switches',
             'answers',
-            'reviewed_questions', 
+            'reviewed_questions',
             'warning_count'
         ]);
         $request->session()->regenerateToken();
-    
+
         return response()->json([
             'success' => true,
-        ],200);
+        ], 200);
     }
 
     /**
@@ -495,11 +542,164 @@ class MCQController extends Controller
 
 
 
-    public function thanksCandidate(Request $request){
-   
+    public function thanksCandidate(Request $request)
+    {
+
 
         return view('mcq.thanks');
     }
+
+
+
+    public function beforeTimeSubmit(Request $request)
+    {
+
+
+        // First, verify that the email from the request matches the authenticated user's email
+        $submittedEmail = $request->input('email');
+        $authEmail = auth()->user()->email;
+
+        if ($submittedEmail !== $authEmail) {
+            return response()->json(['error' => 'Email verification failed.'], 422);
+        }
+
+        // Retrieve the active exam session for the user
+        $examSession = ExamAttempt::where('user_id', auth()->id())
+            ->where('status', 'in_progress')
+            ->first();
+
+        // Log the exam submission activity
+        activity('Exam Submitted')
+            ->causedBy(Auth::user())
+            ->withProperties(['ip' => $request->ip(), 'email' => $authEmail])
+            ->log('Exam is submitted by user at ' . Carbon::now() . ' - Session ID: ' . ($examSession ? $examSession->id : 'N/A'));
+
+        if (!$examSession) {
+            return response()->json(['error' => 'No active exam session found'], 404);
+        }
+
+        // Calculate time spent (adjusted as needed)
+        $timeSpent = (int) $request->timeSpent - 1;
+
+        // Start the transaction
+        DB::beginTransaction();
+        try {
+
+            // Update exam session status and time spent
+            $examSession->update([
+                'status' => 'completed',
+                'time_spent' => $timeSpent,
+                'submitted_at' => now()
+            ]);
+
+            // Process answers
+            $answers = $request->input('answers', []);
+            $reviewedQuestions = $request->input('reviewed_questions', []);
+
+
+
+
+            $correct = 0;
+            $incorrect = 0;
+            $unanswered = 0;
+
+
+
+            // Update attempt with scores
+
+
+
+            foreach ($answers as $answer) {
+
+
+                if (isset($answer['question']) && isset($answer['answer'])) {
+                    ExamAnswer::create([
+                        'exam_attempt_id' => $examSession->id,
+                        'question_id' => $answer['question'],
+                        'selected_option' => $answer['answer'],
+                        'is_reviewed' => in_array($answer['question'], $reviewedQuestions)
+                    ]);
+                }
+
+
+                $question = Question::find($answer['question']);
+                if (!$question)
+                    continue;
+
+                if (empty($answer['answer'])) {
+                    $unanswered++;
+                } else {
+                    $isCorrect = $question->options()
+                        ->where('id', $answer['answer'])
+                        ->where('is_correct', true)
+                        ->exists();
+
+                    if ($isCorrect) {
+                        $correct++;
+                    } else {
+                        $incorrect++;
+                    }
+                }
+
+
+
+
+            }
+
+
+            $examSession->update([
+                'score' => count($answers) > 0 ? ($correct / count($answers)) * 100 : 0,
+                'total_questions' => count($answers),
+                'correct_answers' => $correct,
+                'incorrect_answers' => $incorrect,
+                'unanswered_questions' => $unanswered
+            ]);
+
+            // Commit the transaction
+            DB::commit();
+        } catch (\Exception $e) {
+            // Roll back on error
+            DB::rollBack();
+
+            // Log the error activity
+            activity('Exam Submission Error')
+                ->causedBy(Auth::user())
+                ->withProperties([
+                    'ip' => $request->ip(),
+                    'email' => $authEmail,
+                    'error' => $e->getMessage()
+                ])
+                ->log('Exam submission error occurred at ' . Carbon::now() . ' - Session ID: ' . $examSession->id);
+
+            Log::error('Exam submission failed', [
+                'error' => $e->getMessage(),
+                'session_id' => $examSession->id
+            ]);
+
+            return response()->json(['error' => 'Exam submission failed. Please try again.'], 500);
+        }
+
+        // Log out and clear session data
+        Auth::logout();
+        $request->session()->invalidate();
+        Session::forget([
+            'exam_started',
+            'exam_start_time',
+            'exam_end_time',
+            'exam_ip',
+            'exam_user_agent',
+            'exam_device_fingerprint',
+            'last_activity',
+            'tab_switches',
+            'answers',
+            'reviewed_questions',
+            'warning_count'
+        ]);
+        $request->session()->regenerateToken();
+
+        return response()->json(['success' => true], 200);
+    }
+
 
 
 }
